@@ -142,17 +142,18 @@ export function fmtG(x, p = 6) {
   return t.includes('.') ? t.replace(/0+$/, '').replace(/\.$/, '') : t;
 }
 
-/** A value with an SI prefix ("4.7µF"), p significant digits; null -> "?". */
-export function formatSi(value, unit = '', p = 6) {
+/** A value with an SI prefix ("4.7µF"), p significant digits; null -> "?". sep goes between the number and the
+ * unit (the panel writes "4.7 µF"; GroundTruth's own text "4.7µF"). */
+export function formatSi(value, unit = '', p = 6, sep = '') {
   if (value === null || value === undefined) return '?';
-  if (value === 0) return `0${unit}`;
+  if (value === 0) return `0${sep}${unit}`;
   for (const [mult, prefix] of [[1e9, 'G'], [1e6, 'M'], [1e3, 'k'], [1, ''], [1e-3, 'm'], [1e-6, 'µ'],
     [1e-9, 'n'], [1e-12, 'p']]) {
     if (Math.abs(value) >= mult * 0.999) {     // 0.999: rounding (999.9999e-9) still gets the larger prefix
-      return `${fmtG(value / mult, p)}${prefix}${unit}`;
+      return `${fmtG(value / mult, p)}${sep}${prefix}${unit}`;
     }
   }
-  return `${fmtG(value, 3)}${unit}`;
+  return `${fmtG(value, 3)}${sep}${unit}`;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -485,23 +486,141 @@ export function describeCurve(params, names = DEFAULT_NAMES) {
 // ---------------------------------------------------------------------------------------------------------------
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-// Mantine's own CSS variables, so the chart follows InvenTree's light and dark themes
-const COLOR = {
+// Mantine's own CSS variables (InvenTree's theme), so the panel follows its light and dark modes and primary colour
+const V = {
   text: 'var(--mantine-color-text, #212529)',
-  muted: 'var(--mantine-color-dimmed, #868e96)',
-  grid: 'var(--mantine-color-default-border, #dee2e6)',
+  dimmed: 'var(--mantine-color-dimmed, #868e96)',
+  border: 'var(--mantine-color-default-border, #dee2e6)',
+  body: 'var(--mantine-color-body, #ffffff)',
+  field: 'var(--mantine-color-default, #ffffff)',
+  hover: 'var(--mantine-color-default-hover, #f8f9fa)',
   accent: 'var(--mantine-primary-color-filled, #228be6)',
-  surface: 'var(--mantine-color-body, #ffffff)',
+  accentLight: 'var(--mantine-primary-color-light, rgba(34, 139, 230, 0.1))',
+  radius: 'var(--mantine-radius-md, 8px)',
+  mono: 'var(--mantine-font-family-monospace, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)',
+  warnBg: 'var(--mantine-color-orange-light, rgba(253, 126, 20, 0.1))',
   warn: 'var(--mantine-color-orange-filled, #fd7e14)',
+  errorBg: 'var(--mantine-color-red-light, rgba(250, 82, 82, 0.1))',
   error: 'var(--mantine-color-red-filled, #fa5252)'
 };
 
-/** An HTML element with style, text and children. */
-function el(tag, style = {}, text = null, children = []) {
+// The panel's stylesheet: every class starts with "cbias-", so nothing leaks into InvenTree's page. The layout keys
+// off the panel's own width (a container query), not the window's.
+const CSS = `
+.cbias { container-type: inline-size; color: ${V.text}; font-size: 14px; line-height: 1.45; }
+.cbias *, .cbias *::before, .cbias *::after { box-sizing: border-box; }
+.cbias-stack { display: flex; flex-direction: column; gap: 16px; }
+.cbias-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.cbias-toolbar-text { color: ${V.dimmed}; font-size: 13px; }
+.cbias-btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; font: inherit;
+  font-size: 13px; font-weight: 500; color: ${V.text}; background: ${V.field}; border: 1px solid ${V.border};
+  border-radius: 4px; cursor: pointer; transition: background-color 120ms; }
+.cbias-btn:hover { background: ${V.hover}; }
+.cbias-btn:focus-visible, .cbias-seg button:focus-visible, .cbias-icon-btn:focus-visible {
+  outline: 2px solid ${V.accent}; outline-offset: 2px; }
+.cbias-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+  flex: none; color: ${V.dimmed}; background: transparent; border: 0; border-radius: 4px; cursor: pointer; }
+.cbias-icon-btn:hover { background: ${V.hover}; color: ${V.text}; }
+.cbias-card { min-width: 0; padding: 16px; background: ${V.body}; border: 1px solid ${V.border};
+  border-radius: ${V.radius}; }
+.cbias-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex-wrap: wrap; margin-bottom: 12px; }
+.cbias-card-title { font-size: 14px; font-weight: 600; }
+.cbias-card-note { color: ${V.dimmed}; font-size: 12px; }
+.cbias-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.cbias-tile-label { color: ${V.dimmed}; font-size: 11px; font-weight: 700; letter-spacing: 0.05em;
+  text-transform: uppercase; }
+.cbias-tile-value { margin-top: 6px; font-size: 26px; font-weight: 600; line-height: 1.2;
+  font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.cbias-tile-note { margin-top: 4px; color: ${V.dimmed}; font-size: 12px; font-variant-numeric: tabular-nums; }
+.cbias-tile-bar { height: 4px; margin-top: 10px; overflow: hidden; background: ${V.hover}; border-radius: 2px; }
+.cbias-tile-bar > div { height: 100%; background: ${V.accent}; border-radius: 2px; }
+.cbias-main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+.cbias-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+@container (max-width: 980px) {
+  .cbias-main { grid-template-columns: minmax(0, 1fr); }
+  .cbias-side { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); align-items: start; }
+  .cbias-side > :last-child { grid-column: 1 / -1; }
+}
+.cbias-seg { display: inline-flex; padding: 3px; background: ${V.hover}; border: 1px solid ${V.border};
+  border-radius: 6px; }
+.cbias-seg button { padding: 4px 12px; font: inherit; font-size: 12px; font-weight: 500; color: ${V.dimmed};
+  background: transparent; border: 0; border-radius: 4px; cursor: pointer; }
+.cbias-seg button[aria-pressed="true"] { color: ${V.text}; background: ${V.body};
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+.cbias-chart { position: relative; width: 100%; }
+.cbias-chart svg { display: block; width: 100%; font-family: inherit; cursor: crosshair; user-select: none;
+  touch-action: pan-y; }
+.cbias-tip { position: absolute; z-index: 2; display: none; min-width: 150px; padding: 8px 10px;
+  pointer-events: none; font-size: 12px; color: ${V.text}; background: ${V.body}; border: 1px solid ${V.border};
+  border-radius: 6px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14); }
+.cbias-tip-title { margin-bottom: 4px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.cbias-tip-row { display: flex; justify-content: space-between; gap: 16px; font-variant-numeric: tabular-nums; }
+.cbias-tip-row span:first-child { color: ${V.dimmed}; }
+.cbias-pill { display: inline-block; margin-top: 6px; padding: 1px 8px; font-size: 11px; font-weight: 600;
+  color: ${V.dimmed}; background: ${V.hover}; border-radius: 999px; }
+.cbias-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; color: ${V.dimmed}; font-size: 12px; }
+.cbias-legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.cbias-input-wrap { position: relative; }
+.cbias-input { width: 100%; height: 36px; padding: 0 34px 0 12px; font: inherit; font-size: 15px;
+  font-variant-numeric: tabular-nums; color: ${V.text}; background: ${V.field}; border: 1px solid ${V.border};
+  border-radius: 4px; outline: none; transition: border-color 120ms; }
+.cbias-input:focus { border-color: ${V.accent}; }
+.cbias-input-unit { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); color: ${V.dimmed};
+  pointer-events: none; }
+.cbias-readout { margin-top: 14px; }
+.cbias-readout-value { font-size: 28px; font-weight: 600; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.cbias-readout-note { margin-top: 2px; color: ${V.dimmed}; font-size: 13px; font-variant-numeric: tabular-nums; }
+.cbias-hint { margin-top: 10px; color: ${V.dimmed}; font-size: 12px; }
+.cbias-table { width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; border-collapse: collapse; }
+.cbias-table th { padding: 0 8px 8px; color: ${V.dimmed}; font-size: 11px; font-weight: 700; letter-spacing: 0.05em;
+  text-align: right; text-transform: uppercase; border-bottom: 1px solid ${V.border}; }
+.cbias-table td { padding: 7px 8px; text-align: right; border-bottom: 1px solid ${V.border}; }
+.cbias-table th:first-child, .cbias-table td:first-child { text-align: left; }
+.cbias-table tr:last-child td { border-bottom: 0; }
+.cbias-table tbody tr:hover td { background: ${V.hover}; }
+.cbias-table tr.cbias-nominal td { color: ${V.dimmed}; }
+.cbias-code { display: flex; align-items: flex-start; gap: 8px; padding: 8px 4px 8px 10px; font-family: ${V.mono};
+  font-size: 12px; line-height: 1.6; word-break: break-word; background: ${V.hover}; border-radius: 6px; }
+.cbias-code > span { flex: 1; min-width: 0; padding-top: 2px; }
+.cbias-alert { display: flex; gap: 10px; padding: 12px 14px; border-radius: ${V.radius}; }
+.cbias-alert > svg { flex: none; margin-top: 1px; }
+.cbias-alert.cbias-warn { background: ${V.warnBg}; }
+.cbias-alert.cbias-warn > svg { color: ${V.warn}; }
+.cbias-alert.cbias-error { background: ${V.errorBg}; }
+.cbias-alert.cbias-error > svg { color: ${V.error}; }
+.cbias-alert-title { font-weight: 600; }
+.cbias-alert ul { margin: 6px 0 0; padding-left: 18px; }
+.cbias-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 48px 16px;
+  text-align: center; border: 1px dashed ${V.border}; border-radius: ${V.radius}; }
+.cbias-empty-icon { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px;
+  margin-bottom: 6px; color: ${V.accent}; background: ${V.accentLight}; border-radius: 50%; }
+.cbias-empty-title { font-size: 16px; font-weight: 600; }
+.cbias-empty-text { max-width: 520px; color: ${V.dimmed}; font-size: 13px; }
+.cbias-empty-text code { font-family: ${V.mono}; font-size: 12px; }
+.cbias-foot { color: ${V.dimmed}; font-size: 12px; line-height: 1.6; }
+.cbias-skel { background: ${V.hover}; border-radius: ${V.radius}; animation: cbias-pulse 1.4s ease-in-out infinite; }
+@keyframes cbias-pulse { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .cbias-skel { animation: none; } }
+`;
+
+/** Put the panel's stylesheet into the page once (replaced when a newer copy of this file runs). */
+function installStyle() {
+  let style = document.getElementById('cbias-panel-style');
+  if (!style) {
+    style = document.createElement('style');
+    style.id = 'cbias-panel-style';
+    document.head.appendChild(style);
+  }
+  if (style.textContent !== CSS) style.textContent = CSS;
+}
+
+/** An HTML element with a class, text and children (text only ever goes in as text, never as HTML). */
+function el(tag, cls = '', text = null, children = []) {
   const e = document.createElement(tag);
-  Object.assign(e.style, style);
+  if (cls) e.className = cls;
   if (text !== null) e.textContent = text;
-  for (const c of children) e.appendChild(c);
+  for (const c of children) if (c) e.appendChild(c);
   return e;
 }
 
@@ -513,7 +632,31 @@ function svgEl(tag, attrs = {}, text = null) {
   return e;
 }
 
-/** A ΔC percentage as the panel writes it: "−42.9 %" (a real minus sign). */
+// Outline icons from Tabler Icons (MIT), the set InvenTree uses: their 24 × 24 paths
+const ICONS = {
+  refresh: ['M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4', 'M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4'],
+  copy: ['M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 ' +
+    '-2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667z',
+  'M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1'],
+  check: ['M5 12l5 5l10 -10'],
+  chart: ['M4 19l16 0', 'M4 15l4 -6l4 2l4 -5l4 4'],
+  alert: ['M12 9v4', 'M10.363 3.591l-8.106 13.534a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636 ' +
+    '-2.87l-8.106 -13.536a1.914 1.914 0 0 0 -3.274 0z', 'M12 16h.01']
+};
+
+/** A Tabler icon as inline SVG, in the text's colour. */
+function icon(name, size = 16) {
+  const s = svgEl('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+    'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' });
+  for (const d of ICONS[name]) s.appendChild(svgEl('path', { d }));
+  return s;
+}
+
+/** A capacitance or voltage as the panel shows it: "129.3 nF", "50 V". */
+const cap = (c) => formatSi(c, 'F', 4, ' ');
+const volts = (v) => `${fmtG(Number(v.toPrecision(4)), 4)} V`;
+
+/** A ΔC percentage with a real minus sign: "−41.2 %". */
 function pctText(pct) {
   const r = Math.abs(pct) < 0.05 ? 0 : pct;
   return `${r > 0 ? '+' : r < 0 ? '−' : '±'}${Math.abs(r).toFixed(1)} %`;
@@ -525,6 +668,24 @@ function niceStep(span, target) {
   const mag = 10 ** Math.floor(Math.log10(raw));
   const r = raw / mag;
   return (r < 1.5 ? 1 : r < 3 ? 2 : r < 7 ? 5 : 10) * mag;
+}
+
+/** Ticks from lo to hi (inclusive) every step, without the drift repeated addition gives. */
+function ticks(lo, hi, step) {
+  const out = [];
+  for (let k = 0; lo + k * step <= hi + step * 1e-9; k++) out.push(Number((lo + k * step).toPrecision(12)));
+  return out;
+}
+
+/** A remembered choice of this viewer (the chart's scale); storage may be unavailable, the default then holds. */
+function remember(key, value) {
+  try {
+    if (value === undefined) return window.localStorage.getItem(`cbias.${key}`);
+    window.localStorage.setItem(`cbias.${key}`, value);
+  } catch (error) {
+    // private window or blocked storage: nothing is remembered
+  }
+  return null;
 }
 
 /** The part's parameters [{name, units, data}] through InvenTree's API (InvenTree 1.1+, else the older endpoint). */
@@ -545,219 +706,410 @@ async function fetchParameters(api, partId) {
   return rows(r.data);
 }
 
-/** The chart: ΔC (%) against the DC voltage, the points, a crosshair readout; appended to `host`. */
-function drawChart(host, model) {
-  const { curve, c0, vMax, rated } = model;
-  const W = 720;
-  const H = 340;
-  const left = 56;
-  const right = 20;
-  const top = 16;
-  const bottom = 46;
-  const vLast = curve[curve.length - 1][0];
-  const pctAt = (v) => 100 * (cAt(curve, c0, v) / c0 - 1);
+let chartIds = 0;      // a unique id per chart for its SVG gradient
 
-  // the curve sampled: solid to the last point (through every point), dashed beyond it
-  const N = 300;
-  const grid = Array.from({ length: N + 1 }, (_, k) => (vMax * k) / N);
+/**
+ * The chart, drawn at `host`'s pixel width (text stays its size at any width): the curve against the DC voltage as
+ * ΔC (%) or as capacitance (state.mode), the capacitance lost shaded between it and the nominal, the given points,
+ * the rated voltage, the voltage picked (state.lookupV) and a hover readout. onPick(v): a click on the chart.
+ */
+function drawChart(host, model, state, onPick) {
+  const { curve, c0, vMax, rated } = model;
+  const width = Math.max(280, Math.floor(host.clientWidth));
+  const height = Math.round(Math.min(500, Math.max(260, width * 0.42)));
+  const pct = state.mode !== 'abs';
+  const pad = { l: pct ? 52 : 66, r: 16, t: 16, b: 46 };
+  const vLast = curve[curve.length - 1][0];
+  const val = (c) => (pct ? 100 * (c / c0 - 1) : c);
+  const at = (v) => val(cAt(curve, c0, v));
+
+  // the curve sampled about every 2 px: solid to the last point (through every point), dashed beyond it
+  const n = Math.max(150, Math.min(600, Math.round(width / 2)));
+  const grid = Array.from({ length: n + 1 }, (_, k) => (vMax * k) / n);
   const solid = [...new Set([...grid.filter((v) => v <= vLast), ...curve.map((p) => p[0])])].sort((a, b) => a - b);
   const dashed = vLast < vMax ? [vLast, ...grid.filter((v) => v > vLast)] : [];
-  const all = [...solid, ...dashed].map(pctAt);
-  const lo = Math.min(...all, -10);
-  const hi = Math.max(...all, 0);
-  const yStep = niceStep(hi - lo, 5);
-  const yLo = Math.max(-100, Math.floor(lo / yStep) * yStep);
-  const yHi = Math.ceil((hi + 0.02 * (hi - lo)) / yStep) * yStep;
-  const xStep = niceStep(vMax, 6);
+  const values = [...solid, ...dashed].map(at);
 
-  const x = (v) => left + (v / vMax) * (W - left - right);
-  const y = (p) => top + ((yHi - p) / (yHi - yLo)) * (H - top - bottom);
-
-  const wrap = el('div', { position: 'relative', width: '100%', maxWidth: '900px' });
-  const svg = svgEl('svg', {
-    viewBox: `0 0 ${W} ${H}`, width: '100%', role: 'img',
-    'aria-label': `DC-bias curve: capacitance change against DC voltage, 0 to ${fmtG(vMax, 4)} V`
-  });
-  svg.style.display = 'block';
-  svg.style.height = 'auto';
-  svg.style.fontFamily = 'inherit';
-
-  for (let p = yLo; p <= yHi + 1e-9; p += yStep) {              // horizontal grid and the ΔC labels
-    svg.appendChild(svgEl('line', { x1: left, x2: W - right, y1: y(p), y2: y(p), stroke: COLOR.grid,
-      'stroke-width': Math.abs(p) < 1e-9 ? 1.5 : 1 }));
-    svg.appendChild(svgEl('text', { x: left - 8, y: y(p) + 4, 'text-anchor': 'end', 'font-size': 11,
-      fill: COLOR.muted }, Math.abs(p) < 1e-9 ? '0 %' : `${p > 0 ? '+' : '−'}${fmtG(Math.abs(p), 4)} %`));
+  let yLo;
+  let yHi;
+  let yStep;
+  if (pct) {
+    const lo = Math.min(...values, -10);
+    const hi = Math.max(...values, 0);
+    yStep = niceStep(hi - lo, 5);
+    yLo = Math.max(-100, Math.floor(lo / yStep) * yStep);
+    yHi = Math.ceil((hi + 0.04 * (hi - lo)) / yStep) * yStep;
+  } else {
+    const hi = Math.max(...values, c0);
+    yStep = niceStep(hi, 5);
+    yLo = 0;
+    yHi = Math.ceil((hi * 1.04) / yStep) * yStep;
   }
-  for (let v = 0; v <= vMax + 1e-9 * vMax; v += xStep) {           // vertical grid and the voltage labels
-    svg.appendChild(svgEl('line', { x1: x(v), x2: x(v), y1: top, y2: H - bottom, stroke: COLOR.grid,
-      'stroke-width': 1 }));
-    svg.appendChild(svgEl('text', { x: x(v), y: H - bottom + 16, 'text-anchor': 'middle', 'font-size': 11,
-      fill: COLOR.muted }, `${fmtG(Number(v.toPrecision(6)), 4)} V`));
+  const xStep = niceStep(vMax, Math.max(3, Math.floor(width / 110)));
+  const x = (v) => pad.l + (v / vMax) * (width - pad.l - pad.r);
+  const y = (p) => pad.t + ((yHi - p) / (yHi - yLo)) * (height - pad.t - pad.b);
+  const yLabel = (t) => (pct ? (Math.abs(t) < 1e-9 ? '0 %' : `${t > 0 ? '+' : '−'}${fmtG(Math.abs(t), 4)} %`)
+    : formatSi(t, 'F', 3, ' '));
+
+  const svg = svgEl('svg', { width, height, viewBox: `0 0 ${width} ${height}`, role: 'img',
+    'aria-label': `DC-bias curve: ${pct ? 'change of capacitance' : 'capacitance'} against the DC voltage, ` +
+      `0 to ${volts(vMax)}` });
+  const id = `cbias-grad-${++chartIds}`;
+  const defs = svgEl('defs');
+  const grad = svgEl('linearGradient', { id, x1: 0, y1: 0, x2: 0, y2: 1 });
+  grad.appendChild(svgEl('stop', { offset: '0%', 'stop-color': V.accent, 'stop-opacity': 0.04 }));
+  grad.appendChild(svgEl('stop', { offset: '100%', 'stop-color': V.accent, 'stop-opacity': 0.2 }));
+  defs.appendChild(grad);
+  svg.appendChild(defs);
+
+  const small = { 'font-size': 12, fill: V.dimmed };
+  for (const t of ticks(yLo, yHi, yStep)) {                  // horizontal grid and the y labels
+    svg.appendChild(svgEl('line', { x1: pad.l, x2: width - pad.r, y1: y(t), y2: y(t), stroke: V.border }));
+    svg.appendChild(svgEl('text', { x: pad.l - 10, y: y(t) + 4, 'text-anchor': 'end', ...small }, yLabel(t)));
   }
-  svg.appendChild(svgEl('text', { x: (left + W - right) / 2, y: H - 6, 'text-anchor': 'middle', 'font-size': 12,
-    fill: COLOR.text }, 'DC voltage across the capacitor'));
-  svg.appendChild(svgEl('text', { x: 14, y: (top + H - bottom) / 2, 'text-anchor': 'middle', 'font-size': 12,
-    fill: COLOR.text, transform: `rotate(-90 14 ${(top + H - bottom) / 2})` }, 'ΔC from nominal'));
+  for (const v of ticks(0, vMax, xStep)) {                   // vertical grid and the voltage labels
+    svg.appendChild(svgEl('line', { x1: x(v), x2: x(v), y1: pad.t, y2: height - pad.b, stroke: V.border,
+      'stroke-opacity': 0.55 }));
+    svg.appendChild(svgEl('text', { x: x(v), y: height - pad.b + 18, 'text-anchor': 'middle', ...small },
+      `${fmtG(v, 4)} V`));
+  }
+  svg.appendChild(svgEl('text', { x: (pad.l + width - pad.r) / 2, y: height - 6, 'text-anchor': 'middle',
+    ...small }, 'DC bias across the capacitor'));
+
+  // the capacitance lost: between the nominal and the curve
+  const yNom = y(val(c0));
+  const line = [...solid, ...dashed.slice(1)];
+  const area = [`${x(0)},${yNom}`, ...line.map((v) => `${x(v).toFixed(2)},${y(at(v)).toFixed(2)}`),
+    `${x(line[line.length - 1]).toFixed(2)},${yNom}`];
+  svg.appendChild(svgEl('polygon', { points: area.join(' '), fill: `url(#${id})` }));
+  svg.appendChild(svgEl('line', { x1: pad.l, x2: width - pad.r, y1: yNom, y2: yNom, stroke: V.dimmed,
+    'stroke-width': 1, 'stroke-dasharray': '4 4' }));
+  svg.appendChild(svgEl('text', { x: pad.l + 8, y: yNom - 6, ...small, 'font-size': 11 },
+    `nominal ${cap(c0)}`));
 
   if (rated > 0 && rated <= vMax) {                          // the rated voltage
-    svg.appendChild(svgEl('line', { x1: x(rated), x2: x(rated), y1: top, y2: H - bottom, stroke: COLOR.muted,
-      'stroke-width': 1, 'stroke-dasharray': '3 3' }));
-    svg.appendChild(svgEl('text', { x: x(rated) - 4, y: top + 12, 'text-anchor': 'end', 'font-size': 11,
-      fill: COLOR.muted }, `rated ${fmtG(rated, 4)} V`));
+    svg.appendChild(svgEl('line', { x1: x(rated), x2: x(rated), y1: pad.t, y2: height - pad.b, stroke: V.dimmed,
+      'stroke-dasharray': '4 4' }));
+    svg.appendChild(svgEl('text', { x: x(rated) - 6, y: pad.t + 12, 'text-anchor': 'end', ...small,
+      'font-size': 11 }, `rated ${volts(rated)}`));
   }
 
-  const poly = (vs, dash) => svgEl('polyline', {
-    points: vs.map((v) => `${x(v).toFixed(2)},${y(pctAt(v)).toFixed(2)}`).join(' '),
-    fill: 'none', stroke: COLOR.accent, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round',
-    ...(dash ? { 'stroke-dasharray': '7 5' } : {})
+  const path = (vs, dash) => svgEl('polyline', {
+    points: vs.map((v) => `${x(v).toFixed(2)},${y(at(v)).toFixed(2)}`).join(' '),
+    fill: 'none', stroke: V.accent, 'stroke-width': 2.5, 'stroke-linejoin': 'round', 'stroke-linecap': 'round',
+    ...(dash ? { 'stroke-dasharray': '6 6' } : {})
   });
-  svg.appendChild(poly(solid, false));
-  if (dashed.length > 1) svg.appendChild(poly(dashed, true));
-
+  svg.appendChild(path(solid, false));
+  if (dashed.length > 1) svg.appendChild(path(dashed, true));
   for (const [v, c] of curve) {                              // the given points
-    const dot = svgEl('circle', { cx: x(v), cy: y(100 * (c / c0 - 1)), r: 4.5, fill: COLOR.accent,
-      stroke: COLOR.surface, 'stroke-width': 2 });
-    dot.appendChild(svgEl('title', {}, `${fmtG(v, 4)} V: ${formatSi(c, 'F', 4)} (${pctText(100 * (c / c0 - 1))})`));
+    const dot = svgEl('circle', { cx: x(v), cy: y(val(c)), r: 5, fill: V.accent, stroke: V.body, 'stroke-width': 2 });
+    dot.appendChild(svgEl('title', {}, `${volts(v)}: ${cap(c)} (${pctText(100 * (c / c0 - 1))}), given`));
     svg.appendChild(dot);
   }
 
-  // the hover layer: a crosshair, a dot on the curve and a readout
-  const cross = svgEl('line', { y1: top, y2: H - bottom, stroke: COLOR.muted, 'stroke-width': 1, visibility: 'hidden' });
-  const ring = svgEl('circle', { r: 5, fill: COLOR.surface, stroke: COLOR.accent, 'stroke-width': 2,
-    visibility: 'hidden' });
-  const hit = svgEl('rect', { x: left, y: top, width: W - left - right, height: H - top - bottom, fill: 'transparent' });
+  if (state.lookupV !== null && state.lookupV >= 0 && state.lookupV <= vMax) {     // the voltage picked
+    const v = state.lookupV;
+    const c = cAt(curve, c0, v);
+    const px = x(v);
+    const py = y(val(c));
+    svg.appendChild(svgEl('line', { x1: px, x2: px, y1: pad.t, y2: height - pad.b, stroke: V.accent,
+      'stroke-opacity': 0.6, 'stroke-dasharray': '2 3' }));
+    svg.appendChild(svgEl('circle', { cx: px, cy: py, r: 6.5, fill: V.body, stroke: V.accent, 'stroke-width': 2.5 }));
+    const right = px < width * 0.7;
+    // a halo in the background colour keeps the label readable over the grid and the curve
+    svg.appendChild(svgEl('text', { x: px + (right ? 12 : -12), y: Math.max(pad.t + 14, py - 12),
+      'text-anchor': right ? 'start' : 'end', 'font-size': 12, 'font-weight': 600, fill: V.text,
+      stroke: V.body, 'stroke-width': 4, 'paint-order': 'stroke', 'stroke-linejoin': 'round' },
+    `${volts(v)} · ${cap(c)}`));
+  }
+
+  // the hover layer: a crosshair, a ring on the curve and a readout
+  const cross = svgEl('line', { y1: pad.t, y2: height - pad.b, stroke: V.dimmed, visibility: 'hidden' });
+  const ring = svgEl('circle', { r: 5, fill: V.body, stroke: V.accent, 'stroke-width': 2, visibility: 'hidden' });
+  const hit = svgEl('rect', { x: pad.l, y: pad.t, width: width - pad.l - pad.r, height: height - pad.t - pad.b,
+    fill: 'transparent' });
   svg.appendChild(cross);
   svg.appendChild(ring);
   svg.appendChild(hit);
-  const tip = el('div', {
-    position: 'absolute', pointerEvents: 'none', display: 'none', padding: '4px 8px', borderRadius: '4px',
-    fontSize: '12px', whiteSpace: 'nowrap', background: COLOR.surface, color: COLOR.text,
-    border: `1px solid ${COLOR.grid}`, boxShadow: '0 1px 4px rgba(0,0,0,0.15)'
+
+  const tipV = el('div', 'cbias-tip-title');
+  const tipC = el('span');
+  const tipP = el('span');
+  const tipX = el('div', 'cbias-pill', 'extrapolated');
+  const tip = el('div', 'cbias-tip', null, [tipV, el('div', 'cbias-tip-row', null, [el('span', '', 'Capacitance'),
+    tipC]), el('div', 'cbias-tip-row', null, [el('span', '', 'Change'), tipP]), tipX]);
+  const voltageAt = (e) => {
+    const box = svg.getBoundingClientRect();
+    const sx = ((e.clientX - box.left) / box.width) * width;
+    return Math.min(vMax, Math.max(0, ((sx - pad.l) / (width - pad.l - pad.r)) * vMax));
+  };
+  hit.addEventListener('pointermove', (e) => {
+    const v = voltageAt(e);
+    const c = cAt(curve, c0, v);
+    const px = x(v);
+    const py = y(val(c));
+    for (const [k, value] of [['x1', px], ['x2', px]]) cross.setAttribute(k, value);
+    ring.setAttribute('cx', px);
+    ring.setAttribute('cy', py);
+    cross.setAttribute('visibility', 'visible');
+    ring.setAttribute('visibility', 'visible');
+    tipV.textContent = volts(v);
+    tipC.textContent = cap(c);
+    tipP.textContent = pctText(100 * (c / c0 - 1));
+    tipX.style.display = v > vLast * (1 + 1e-9) ? 'inline-block' : 'none';
+    tip.style.display = 'block';
+    const flip = px > width * 0.62;                       // keep the readout inside the chart
+    tip.style.left = flip ? '' : `${px + 16}px`;
+    tip.style.right = flip ? `${width - px + 16}px` : '';
+    tip.style.top = `${Math.min(height - pad.b - 90, Math.max(0, py - 40))}px`;
   });
-  const hide = () => {
+  hit.addEventListener('pointerleave', () => {
     cross.setAttribute('visibility', 'hidden');
     ring.setAttribute('visibility', 'hidden');
     tip.style.display = 'none';
-  };
-  hit.addEventListener('pointermove', (e) => {
-    const box = svg.getBoundingClientRect();
-    const scale = box.width / W;                          // the viewBox keeps its aspect ratio: one scale
-    const sx = (e.clientX - box.left) / scale;
-    const v = Math.min(vMax, Math.max(0, ((sx - left) / (W - left - right)) * vMax));
-    const c = cAt(curve, c0, v);
-    const p = 100 * (c / c0 - 1);
-    cross.setAttribute('x1', x(v));
-    cross.setAttribute('x2', x(v));
-    ring.setAttribute('cx', x(v));
-    ring.setAttribute('cy', y(p));
-    cross.setAttribute('visibility', 'visible');
-    ring.setAttribute('visibility', 'visible');
-    tip.textContent = `${fmtG(Number(v.toPrecision(3)), 3)} V · ${formatSi(c, 'F', 4)} · ${pctText(p)}` +
-      (v > vLast ? ' · beyond the last point' : '');
-    tip.style.display = 'block';
-    const px = x(v) * scale;
-    const flip = px > box.width * 0.6;                    // keep the readout inside the chart
-    tip.style.left = flip ? '' : `${px + 12}px`;
-    tip.style.right = flip ? `${box.width - px + 12}px` : '';
-    tip.style.top = `${Math.max(0, y(p) * scale - 34)}px`;
   });
-  hit.addEventListener('pointerleave', hide);
+  hit.addEventListener('click', (e) => onPick(Number(voltageAt(e).toPrecision(3))));
 
-  wrap.appendChild(svg);
-  wrap.appendChild(tip);
-  host.appendChild(wrap);
+  host.replaceChildren(svg, tip);
 }
 
-/** A line-style key under the chart: solid (through the points) and, when the chart goes past it, dashed (beyond
- * the last point). */
+/** The key under the chart: the line styles and the shading. */
 function legend(model) {
-  const item = (dash, label) => {
-    const s = svgEl('svg', { width: 28, height: 10, 'aria-hidden': 'true' });
-    s.appendChild(svgEl('line', { x1: 2, x2: 26, y1: 5, y2: 5, stroke: COLOR.accent, 'stroke-width': 2,
-      ...(dash ? { 'stroke-dasharray': '6 4' } : {}) }));
-    return el('span', { display: 'inline-flex', alignItems: 'center', gap: '6px', marginRight: '18px' }, null,
-      [s, el('span', {}, label)]);
+  const swatch = (draw) => {
+    const s = svgEl('svg', { width: 26, height: 12, 'aria-hidden': 'true' });
+    draw(s);
+    return s;
   };
-  const one = model.curve.length === 1;
-  const items = [item(false, one ? 'C0 / (1 + (V/V1)²) through the point'
-    : 'monotone cubic (PCHIP) through 0 V and the points')];
-  if (model.curve[model.curve.length - 1][0] < model.vMax) {
-    items.push(item(true, 'beyond the last point: C0 / (1 + (V/V1)²) through it'));
-  }
-  return el('div', { fontSize: '12px', color: COLOR.muted, display: 'flex', flexWrap: 'wrap', rowGap: '4px' }, null,
-    items);
+  const lineKey = (dash) => swatch((s) => s.appendChild(svgEl('line', { x1: 2, x2: 24, y1: 6, y2: 6, stroke: V.accent,
+    'stroke-width': 2.5, 'stroke-linecap': 'round', ...(dash ? { 'stroke-dasharray': '5 4' } : {}) })));
+  const items = [
+    [lineKey(false), model.curve.length === 1 ? 'one-point curve C0 / (1 + (V/V1)²)' : 'interpolated (monotone cubic)'],
+    [swatch((s) => s.appendChild(svgEl('circle', { cx: 13, cy: 6, r: 4.5, fill: V.accent }))), 'given point']
+  ];
+  if (model.curve[model.curve.length - 1][0] < model.vMax) items.push([lineKey(true), 'extrapolated']);
+  items.push([swatch((s) => s.appendChild(svgEl('rect', { x: 2, y: 1, width: 22, height: 10, rx: 2, fill: V.accent,
+    'fill-opacity': 0.18 }))), 'capacitance lost to DC bias']);
+  return el('div', 'cbias-legend', null, items.map(([s, t]) => el('span', '', null, [s, el('span', '', t)])));
 }
 
-/** A "C at [ ] V" box: the curve at a typed voltage (the keyboard's way to read it). */
-function lookup(model) {
-  const out = el('span', { color: COLOR.text, fontVariantNumeric: 'tabular-nums' });
-  const input = el('input', { width: '6em', padding: '2px 6px', font: 'inherit', color: COLOR.text,
-    background: COLOR.surface, border: `1px solid ${COLOR.grid}`, borderRadius: '4px' });
+/** A summary tile: a label, a large value, a note and, for a capacitance, a bar of what is left of the nominal. */
+function tile(label, value, note, share = null) {
+  const bar = share === null ? null : el('div', 'cbias-tile-bar', null, [el('div')]);
+  if (bar) bar.firstChild.style.width = `${Math.max(0, Math.min(1, share)) * 100}%`;
+  return el('div', 'cbias-card', null, [el('div', 'cbias-tile-label', label), el('div', 'cbias-tile-value', value),
+    el('div', 'cbias-tile-note', note), bar]);
+}
+
+/** The summary tiles: the nominal, the curve at half and at the full rated voltage (else at its last point), the data. */
+function tiles(model) {
+  const { c0, rated, curve, vMax } = model;
+  const vLast = curve[curve.length - 1][0];
+  const atV = (v, label, what) => {
+    const c = cAt(curve, c0, v);
+    return tile(label, cap(c), `${pctText(100 * (c / c0 - 1))} · ${what}`, c / c0);
+  };
+  const out = [tile('Nominal', cap(c0), [model.dielectric, rated > 0 ? `${volts(rated)} rated` : null]
+    .filter(Boolean).join(' · ') || 'at 0 V', 1)];
+  if (rated > 0) {
+    out.push(atV(DEFAULT_SHARE * rated, `At ${volts(DEFAULT_SHARE * rated)}`, 'half the rating'));
+    out.push(atV(rated, `At ${volts(rated)}`, 'the rated voltage'));
+  } else {
+    out.push(atV(vLast, `At ${volts(vLast)}`, 'the last point'));
+  }
+  const nPoints = model.how === 'curve' ? curve.length : 1;
+  out.push(tile('Curve data', `${nPoints} point${nPoints === 1 ? '' : 's'}`,
+    `0 – ${volts(vLast)}${vLast < vMax ? ', extrapolated above' : ''}`));
+  return el('div', 'cbias-tiles', null, out);
+}
+
+/** The "Capacitance at" card: a voltage box and the curve's value there; returns {card, set(v)}. */
+function lookupCard(model, onChange) {
+  const input = el('input', 'cbias-input');
   input.type = 'number';
   input.min = '0';
   input.step = 'any';
-  input.setAttribute('aria-label', 'DC voltage');
-  const update = () => {
-    const v = parseFloat(input.value);
+  input.inputMode = 'decimal';
+  input.setAttribute('aria-label', 'DC voltage in volts');
+  const value = el('div', 'cbias-readout-value', '–');
+  const note = el('div', 'cbias-readout-note', '');
+  const vLast = model.curve[model.curve.length - 1][0];
+  const show = (v) => {
     if (!(v >= 0)) {
-      out.textContent = '';
+      value.textContent = '–';
+      note.textContent = 'Type a voltage';
       return;
     }
     const c = cAt(model.curve, model.c0, v);
-    out.textContent = `= ${formatSi(c, 'F', 4)} (${pctText(100 * (c / model.c0 - 1))})`;
+    value.textContent = cap(c);
+    note.textContent = `${pctText(100 * (c / model.c0 - 1))} from nominal` +
+      (v > vLast * (1 + 1e-9) ? ` · extrapolated above ${volts(vLast)}` : '');
   };
-  input.addEventListener('input', update);
-  if (model.rated > 0) {
-    input.value = String(model.rated);
-    update();
-  }
-  return el('label', { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px' }, null,
-    [el('span', {}, 'Capacitance at'), input, el('span', {}, 'V'), out]);
+  input.addEventListener('input', () => {
+    const v = input.value.trim() === '' ? null : parseFloat(input.value);
+    show(v);
+    onChange(v !== null && v >= 0 ? v : null);
+  });
+  const card = el('div', 'cbias-card', null, [
+    el('div', 'cbias-card-head', null, [el('div', 'cbias-card-title', 'Capacitance at')]),
+    el('div', 'cbias-input-wrap', null, [input, el('span', 'cbias-input-unit', 'V')]),
+    el('div', 'cbias-readout', null, [value, note]),
+    el('div', 'cbias-hint', 'Or click a voltage on the chart.')
+  ]);
+  return {
+    card,
+    set: (v) => {
+      input.value = v === null ? '' : String(v);
+      show(v);
+    }
+  };
 }
 
-/** The given points as a table: voltage, capacitance, change. */
-function pointsTable(model) {
-  const cell = (t, head = false) => el(head ? 'th' : 'td', {
-    textAlign: 'right', padding: '4px 12px', borderBottom: `1px solid ${COLOR.grid}`,
-    fontWeight: head ? '600' : '400', fontVariantNumeric: 'tabular-nums'
-  }, t);
-  const rows = [el('tr', {}, null, [cell('DC voltage', true), cell('Capacitance', true), cell('ΔC', true)]),
-    el('tr', { color: COLOR.muted }, null, [cell('0 V'), cell(formatSi(model.c0, 'F', 4)), cell('nominal')])];
-  for (const [v, c] of model.curve) {
-    rows.push(el('tr', {}, null, [cell(`${fmtG(v, 4)} V`), cell(formatSi(c, 'F', 4)),
-      cell(pctText(100 * (c / model.c0 - 1)))]));
-  }
-  return el('table', { borderCollapse: 'collapse', fontSize: '13px', alignSelf: 'flex-start' }, null,
-    [el('tbody', {}, null, rows)]);
+/** The given points as a table, with the nominal at 0 V. */
+function pointsCard(model) {
+  const row = (cells, cls = '') => el('tr', cls, null, cells.map((t) => el('td', '', t)));
+  const head = el('tr', '', null, ['DC bias', 'Capacitance', 'ΔC'].map((t) => el('th', '', t)));
+  const body = [row(['0 V', cap(model.c0), 'nominal'], 'cbias-nominal'),
+    ...model.curve.map(([v, c]) => row([volts(v), cap(c), pctText(100 * (c / model.c0 - 1))]))];
+  return el('div', 'cbias-card', null, [
+    el('div', 'cbias-card-head', null, [el('div', 'cbias-card-title', 'Points'),
+      el('div', 'cbias-card-note', model.how === 'default voltage' ? 'placed at half the rating' : '')]),
+    el('table', 'cbias-table', null, [el('thead', '', null, [head]), el('tbody', '', null, body)])
+  ]);
 }
 
-/** The panel's content for a model from describeCurve. */
-function renderModel(body, model) {
-  const muted = { color: COLOR.muted, fontSize: '13px' };
+/** A block of parameter text with a copy button (when the browser allows the clipboard). */
+function codeBlock(text) {
+  const children = [el('span', '', text)];
+  if (navigator.clipboard?.writeText) {
+    const btn = el('button', 'cbias-icon-btn', null, [icon('copy', 15)]);
+    btn.type = 'button';
+    btn.title = 'Copy';
+    btn.setAttribute('aria-label', 'Copy the parameter text');
+    btn.addEventListener('click', () => {
+      navigator.clipboard.writeText(text).then(() => {
+        btn.replaceChildren(icon('check', 15));
+        setTimeout(() => btn.replaceChildren(icon('copy', 15)), 1500);
+      }).catch(() => {});
+    });
+    children.push(btn);
+  }
+  return el('div', 'cbias-code', null, children);
+}
+
+/** The parameter the curve comes from, as written. */
+function sourceCard(model) {
+  return el('div', 'cbias-card', null, [
+    el('div', 'cbias-card-head', null, [el('div', 'cbias-card-title', model.source),
+      el('div', 'cbias-card-note', 'part parameter')]),
+    codeBlock(model.text)
+  ]);
+}
+
+/** An alert box (warn / error) with a title and an optional body. */
+function alertBox(kind, title, body = []) {
+  return el('div', `cbias-alert cbias-${kind}`, null, [icon('alert', 18),
+    el('div', '', null, [el('div', 'cbias-alert-title', title), ...body])]);
+}
+
+/** The loading placeholder: the layout's shape, pulsing. */
+function skeleton() {
+  const block = (h) => {
+    const b = el('div', 'cbias-skel');
+    b.style.height = `${h}px`;
+    return b;
+  };
+  return el('div', 'cbias-stack', null, [
+    el('div', 'cbias-tiles', null, [block(104), block(104), block(104), block(104)]),
+    block(360)
+  ]);
+}
+
+/** The panel's content for a model from describeCurve; returns a function that stops its resize watching. */
+function renderModel(host, model, names) {
   if (model.status === 'none') {
-    body.appendChild(el('div', { fontSize: '15px', padding: '8px 0' }, model.reason || 'No DC-bias curve available'));
-    return;
+    const generic = !model.reason || model.reason === 'No DC-bias curve available';
+    const text = el('div', 'cbias-empty-text');
+    if (generic) {
+      text.append('Add a ', el('code', '', names.curve), ' parameter to this part, e.g. ',
+        el('code', '', '-5%@10V, -34%@30V, -61%@50V'), ', read off the maker\'s DC-bias chart.');
+    } else {
+      text.textContent = model.reason;
+    }
+    host.replaceChildren(el('div', 'cbias-empty', null, [el('div', 'cbias-empty-icon', null, [icon('chart', 24)]),
+      el('div', 'cbias-empty-title', 'No DC-bias curve available'), text]));
+    return () => {};
   }
   if (model.status === 'error') {
-    body.appendChild(el('div', { fontSize: '15px', color: COLOR.error }, `${model.source ?? 'The curve'} can't be read`));
-    if (model.text) body.appendChild(el('code', { fontSize: '13px' }, model.text));
-    body.appendChild(el('ul', { margin: '4px 0', fontSize: '13px' }, null, model.problems.map((p) => el('li', {}, p))));
-    return;
+    const body = [];
+    if (model.text) body.push(el('div', '', null, [codeBlock(model.text)]));
+    body.push(el('ul', '', null, model.problems.map((p) => el('li', '', p))));
+    body[0].style.margin = '8px 0 0';
+    host.replaceChildren(alertBox('error', `${model.source ?? 'The curve'} can't be read`, body));
+    return () => {};
   }
-  const facts = [`Nominal ${formatSi(model.c0, 'F', 4)}`];
-  if (model.rated > 0) facts.push(`rated ${formatSi(model.rated, 'V', 4)}`);
-  if (model.dielectric) facts.push(model.dielectric);
-  facts.push(`from ${model.source}`);
-  body.appendChild(el('div', { fontSize: '14px' }, facts.join(' · ')));
-  body.appendChild(el('code', { ...muted, wordBreak: 'break-word' }, model.text));
-  for (const w of model.warnings) body.appendChild(el('div', { fontSize: '13px', color: COLOR.warn }, `⚠ ${w}`));
-  drawChart(body, model);
-  body.appendChild(legend(model));
-  body.appendChild(lookup(model));
-  body.appendChild(pointsTable(model));
-  for (const n of model.notes) body.appendChild(el('div', muted, n));
-  body.appendChild(el('div', muted, 'Interpolated as GroundTruth does: typical small-signal values at 25 °C; ' +
-    'above the last point the curve is extrapolated.'));
+
+  const state = { mode: remember('mode') === 'abs' ? 'abs' : 'pct', lookupV: null };
+  const chartHost = el('div', 'cbias-chart');
+  const redraw = () => drawChart(chartHost, model, state, (v) => {
+    state.lookupV = v;
+    lookup.set(v);
+    redraw();
+  });
+  const lookup = lookupCard(model, (v) => {
+    state.lookupV = v;
+    redraw();
+  });
+
+  const seg = el('div', 'cbias-seg');
+  seg.setAttribute('role', 'group');
+  seg.setAttribute('aria-label', 'Chart scale');
+  for (const [mode, label] of [['pct', 'ΔC %'], ['abs', 'Capacitance']]) {
+    const b = el('button', '', label);
+    b.type = 'button';
+    b.setAttribute('aria-pressed', String(state.mode === mode));
+    b.addEventListener('click', () => {
+      state.mode = mode;
+      remember('mode', mode);
+      for (const other of seg.children) other.setAttribute('aria-pressed', String(other === b));
+      redraw();
+    });
+    seg.appendChild(b);
+  }
+
+  const chartCard = el('div', 'cbias-card', null, [
+    el('div', 'cbias-card-head', null, [el('div', 'cbias-card-title', 'Capacitance against DC bias'), seg]),
+    chartHost,
+    legend(model)
+  ]);
+  const notes = [...model.notes, 'Interpolated as GroundTruth does it. Typical small-signal values at 25 °C; ' +
+    'above the last point the curve is extrapolated.'];
+  host.replaceChildren(el('div', 'cbias-stack', null, [
+    ...model.warnings.map((w) => alertBox('warn', w)),
+    tiles(model),
+    el('div', 'cbias-main', null, [chartCard,
+      el('div', 'cbias-side', null, [lookup.card, pointsCard(model), sourceCard(model)])]),
+    el('div', 'cbias-foot', null, notes.map((t) => el('div', '', t)))
+  ]));
+
+  const start = model.rated > 0 ? Number((DEFAULT_SHARE * model.rated).toPrecision(3)) : null;
+  state.lookupV = start;
+  lookup.set(start);
+  // redraw when the panel's width changes (the window, InvenTree's side bar), at most once a frame
+  let lastWidth = -1;
+  let frame = 0;
+  const observer = new ResizeObserver(() => {
+    if (chartHost.clientWidth === lastWidth) return;
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => {
+      lastWidth = chartHost.clientWidth;
+      redraw();
+    });
+  });
+  observer.observe(chartHost);
+  return () => {
+    cancelAnimationFrame(frame);
+    observer.disconnect();
+  };
 }
 
 /**
@@ -766,31 +1118,37 @@ function renderModel(body, model) {
  * settings give.
  */
 export function renderPanel(target, context) {
+  installStyle();
+  target._cbiasStop?.();                       // a previous render into this element: stop its resize watching
   const names = { ...DEFAULT_NAMES, ...(context?.context?.names ?? {}) };
-  const body = el('div', { display: 'flex', flexDirection: 'column', gap: '10px', color: COLOR.text });
-  const reload = el('button', { alignSelf: 'flex-start', font: 'inherit', fontSize: '13px', padding: '2px 10px',
-    cursor: 'pointer', color: COLOR.text, background: 'transparent', border: `1px solid ${COLOR.grid}`,
-    borderRadius: '4px' }, 'Reload');
-  const content = el('div', { display: 'flex', flexDirection: 'column', gap: '10px' });
-  body.appendChild(reload);
-  body.appendChild(content);
-  target.replaceChildren(body);
+  const reload = el('button', 'cbias-btn', null, [icon('refresh', 15), el('span', '', 'Reload')]);
+  reload.type = 'button';
+  const content = el('div');
+  target.replaceChildren(el('div', 'cbias', null, [el('div', 'cbias-stack', null, [
+    el('div', 'cbias-toolbar', null, [
+      el('div', 'cbias-toolbar-text', `The capacitance against the DC voltage across it, from the part's ` +
+        `${names.curve} parameter.`),
+      reload]),
+    content])]));
 
+  let stop = () => {};
+  target._cbiasStop = () => stop();
   const load = () => {
-    content.replaceChildren(el('div', { color: COLOR.muted }, 'Loading parameters…'));
+    stop();
+    stop = () => {};
+    content.replaceChildren(skeleton());
     if (!context?.api || context?.id === undefined || context?.id === null) {
-      content.replaceChildren(el('div', {}, 'No part to show.'));
+      content.replaceChildren(alertBox('error', 'No part to show.'));
       return;
     }
     fetchParameters(context.api, context.id)
       .then((params) => {
-        content.replaceChildren();
-        renderModel(content, describeCurve(params, names));
+        stop = renderModel(content, describeCurve(params, names), names);
       })
       .catch((error) => {
         console.error('cbias panel: could not load the parameters', error);
-        content.replaceChildren(el('div', { color: COLOR.error },
-          `Could not load the part's parameters (${error?.response?.status ?? error?.message ?? error}).`));
+        content.replaceChildren(alertBox('error', 'Could not load the part\'s parameters',
+          [el('div', '', String(error?.response?.status ?? error?.message ?? error))]));
       });
   };
   reload.addEventListener('click', load);

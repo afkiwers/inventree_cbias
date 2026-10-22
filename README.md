@@ -20,12 +20,17 @@ rated voltage, or to 1.25 × the last point when there's no rating. Hover over t
 
 ## Install
 
-1. Install the package into InvenTree's environment, either from this folder (`pip install .`) or from its git URL
-   in Admin, Plugins, Install plugin.
-2. Activate **CbiasPlugin** in Admin, Plugins.
+1. In Admin Center, Plugins, **Install Plugin**:
+   - Package Name: `inventree-cbias-plugin`. It must match `setup.py`; `inventree_cbias` fails.
+   - Source URL: `git+https://github.com/afkiwers/inventree_cbias.git`. Without `git+`, InvenTree passes the URL to
+     pip as a package index (`pip install -i ...`), and pip finds nothing there.
+2. Activate **CbiasPlugin**: the **⋯** menu on its row, then **Activate**.
 3. Turn on **Enable interface integration** (Settings, Plugin settings). Panels need it.
-4. If the panel shows "Error loading content", collect the plugin's static files: run `invoke static`, or
-   `python manage.py collectplugins`.
+4. If the plugin's settings say "Error loading settings", or the panel says "Failed to load module
+   .../static/plugins/cbias/cbias_panel.js" (a 404), the server's processes haven't all loaded the new plugin yet.
+   Activation asks the background worker to copy `cbias_panel.js` into the static files, and a worker that hasn't
+   loaded the plugin skips the copy without an error. Deactivate and activate the plugin again, or run `invoke static`
+   in the server container. Do the same after every upgrade of the plugin.
 
 The panel appears on a part when its category path contains `capacitor` (case doesn't matter), or when the part has
 a `Capacitance`, `Cbias` or `Cbias Curve` parameter. The parameter names and the category keyword can be changed in
