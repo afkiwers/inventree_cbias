@@ -15,6 +15,14 @@ setuptools.setup(
 
     author="Andre Iwers",
 
+    author_email="iwers11@gmail.com",
+
+    url="https://github.com/afkiwers/inventree_cbias",
+
+    project_urls={
+        "GroundTruth": "https://github.com/afkiwers/GroundTruth",
+    },
+
     description="InvenTree plugin: a capacitor's DC-bias (derating) curve on its part page",
 
     long_description=long_description,

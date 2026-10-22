@@ -7,7 +7,7 @@ The curve comes from the part's `Cbias Curve` text parameter. It's read and inte
 [GroundTruth](https://github.com/afkiwers/GroundTruth) reads it (`components/bias.py`), so the plot shows the same
 capacitance GroundTruth uses in a simulation.
 
-![The DC bias panel of a 220 nF 100 V X7R capacitor](images/panel.png)
+![The DC bias panel of a 220 nF 100 V X7R capacitor](https://raw.githubusercontent.com/afkiwers/inventree_cbias/main/images/panel.png)
 
 ## The panel
 
@@ -24,7 +24,7 @@ The bar under a capacitance shows how much of the nominal is left: 112.6 nF at 5
 
 ### The chart
 
-![The chart: the change of capacitance against the DC voltage](images/chart.png)
+![The chart: the change of capacitance against the DC voltage](https://raw.githubusercontent.com/afkiwers/inventree_cbias/main/images/chart.png)
 
 - **The line** is the capacitance against the DC voltage across the capacitor. Between the given points (the dots)
   it is a monotone cubic (PCHIP) through (0 V, nominal) and the points, so it never overshoots between them. Above
@@ -41,7 +41,7 @@ The bar under a capacitance shows how much of the nominal is left: 112.6 nF at 5
 
 ### Reading off values
 
-![The Capacitance at box and the points table](images/readout.png)
+![The Capacitance at box and the points table](https://raw.githubusercontent.com/afkiwers/inventree_cbias/main/images/readout.png)
 
 - **Capacitance at**: type a DC voltage to get the capacitance and its change from the nominal. It starts at half
   the rated voltage, and is marked "extrapolated" above the last point.
@@ -68,9 +68,12 @@ read shows what's wrong with each point instead of a chart. A point more than 1.
 ## Install
 
 1. In Admin Center, Plugins, **Install Plugin**:
-   - Package Name: `inventree-cbias-plugin`. It must match `setup.py`; `inventree_cbias` fails.
-   - Source URL: `git+https://github.com/afkiwers/inventree_cbias.git`. Without `git+`, InvenTree passes the URL to
-     pip as a package index (`pip install -i ...`), and pip finds nothing there.
+   - Package Name: `inventree-cbias-plugin`, with the Source URL left empty: the latest release from PyPI.
+     (Or `pip install inventree-cbias-plugin` in InvenTree's environment, or add it to `plugins.txt`.)
+   - To install the newest code on `main` instead, also set the Source URL to
+     `git+https://github.com/afkiwers/inventree_cbias.git`. Without `git+`, InvenTree passes the URL to pip as a
+     package index (`pip install -i ...`), and pip finds nothing there. The Package Name must still be
+     `inventree-cbias-plugin`; `inventree_cbias` fails.
 2. Activate **CbiasPlugin**: the **⋯** menu on its row, then **Activate**.
 3. Turn on **Enable interface integration** (Settings, Plugin settings). Panels need it.
 4. If the plugin's settings say "Error loading settings", or the panel says "Failed to load module
@@ -84,8 +87,8 @@ a `Capacitance`, `Cbias` or `Cbias Curve` parameter. The parameter names and the
 the plugin's settings.
 
 In use on an InvenTree 1.1+ server (Python 3.14); written against InvenTree's 0.18 plugin interface. On 1.1+ the
-panel reads `/api/parameter/` (parameters for every
-model), and on older servers it falls back to `/api/part/parameter/`. It reads through the logged-in user's own API
+panel reads `/api/parameter/` (parameters for every model), and on older servers it falls back to
+`/api/part/parameter/`. It reads through the logged-in user's own API
 session, so InvenTree's permissions apply. Parameter text is inserted only as text, never as HTML.
 
 ## Development
@@ -98,3 +101,19 @@ node --test tests/test_curve.mjs
 # after a change to GroundTruth's components/bias.py or components/values.py, regenerate the reference:
 <GroundTruth>/.venv/Scripts/python tests/make_reference.py tests/reference.json
 ```
+
+GitHub Actions run on every push and pull request (`.github/workflows/checks.yaml`): flake8, these curve tests, and
+a test build of the package that checks `cbias_panel.js` is in the wheel.
+
+## Releasing
+
+Publishing a GitHub release uploads the package to PyPI (`.github/workflows/pypi.yaml`):
+
+1. Set `CBIAS_PLUGIN_VERSION` in `inventree_cbias/version.py` (e.g. `0.3.0`), merge it to `main`.
+2. On GitHub, Releases, **Draft a new release**, with a new tag of the same version (`0.3.0` or `v0.3.0`), then
+   **Generate release notes** and **Publish release**. The workflow stops if the tag and `version.py` differ.
+
+The upload uses PyPI's Trusted Publishing, so no API token is stored in the repository. Set it up once, before the
+first release: on pypi.org, Your account, Publishing, **Add a new pending publisher** (GitHub): PyPI project name
+`inventree-cbias-plugin`, owner `afkiwers`, repository `inventree_cbias`, workflow `pypi.yaml`, environment `pypi`.
+The first release then creates the project on PyPI.
