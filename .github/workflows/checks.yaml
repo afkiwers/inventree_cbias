@@ -1,0 +1,61 @@
+# Style checks, the curve tests against GroundTruth's reference, and a test build of the package.
+
+name: Checks
+
+on: ["push", "pull_request"]
+
+permissions:
+  contents: read
+
+jobs:
+
+  style:
+    name: Style Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Deps
+        run: |
+          pip install flake8 pep8-naming
+      - name: Style Checks
+        run: |
+          flake8 .
+
+  curve:
+    name: Curve Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: The panel's curve against GroundTruth
+        run: |
+          node --test tests/test_curve.mjs
+
+  build:
+    name: Package Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build and check
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check --strict dist/*
+          unzip -l dist/*.whl | grep -q "inventree_cbias/static/cbias_panel.js"

@@ -1,0 +1,65 @@
+# Publish to the PyPI package index when a GitHub release is published.
+#
+# Uses PyPI's Trusted Publishing (OpenID Connect): PyPI trusts this workflow in this repository, so no API token is
+# stored in the repository's secrets. Set up once on pypi.org (see the README, "Releasing").
+
+name: PIP Publish
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+
+  build:
+    name: Build the package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The release tag matches version.py
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION=$(python -c "from inventree_cbias.version import CBIAS_PLUGIN_VERSION; print(CBIAS_PLUGIN_VERSION)")
+          if [ "${TAG#v}" != "$VERSION" ]; then
+            echo "::error::The release tag $TAG does not match CBIAS_PLUGIN_VERSION $VERSION in inventree_cbias/version.py"
+            exit 1
+          fi
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check --strict dist/*
+      - name: Keep the built files for the publish job
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/inventree-cbias-plugin/
+    permissions:
+      id-token: write    # the OpenID Connect token PyPI's Trusted Publishing checks
+
+    steps:
+      - name: Get the built files
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
